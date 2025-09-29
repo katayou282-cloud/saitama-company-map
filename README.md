@@ -11,11 +11,31 @@
   <style>
     body { margin:0; font-family: system-ui, sans-serif; }
     #map { height: 100vh; }
+    #controls { position: absolute; top: 10px; left: 10px; z-index: 1000; background: white; padding: 8px; border-radius: 6px; }
   </style>
 </head>
 <body>
-  <input type="file" id="file" accept=".csv,text/csv" />
-  <button id="btnDemo">サンプル読込</button>
+  <div id="controls">
+    <div>
+      <label>CSVを読み込む: <input type="file" id="file" accept=".csv,text/csv" /></label>
+      <button id="btnDemo">サンプル読込</button>
+    </div>
+    <div>
+      <label>市町村で絞り込み: <select id="cityFilter"><option value="">全て</option></select></label>
+    </div>
+    <div>
+      <label>法人格で絞り込み:
+        <select id="typeFilter">
+          <option value="">全て</option>
+          <option value="株式会社">株式会社</option>
+          <option value="有限会社">有限会社</option>
+          <option value="NPO法人">NPO法人</option>
+          <option value="その他">その他</option>
+        </select>
+      </label>
+    </div>
+  </div>
+
   <div id="map"></div>
 
   <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
@@ -31,17 +51,26 @@
     const markers = L.markerClusterGroup();
     map.addLayer(markers);
 
-    function plotRows(rows){
+    let rows = [];
+
+    function plotRows(){
       markers.clearLayers();
-      rows.forEach(r => {
+      const city = document.getElementById('cityFilter').value;
+      const type = document.getElementById('typeFilter').value;
+      const filtered = rows.filter(r => {
+        if(city && r.city !== city) return false;
+        if(type && r.type !== type) return false;
+        return true;
+      });
+      filtered.forEach(r => {
         if(r._geo){
           const marker = L.marker([r._geo.lat, r._geo.lon])
-            .bindPopup(`<b>${r.name}</b><br>${r.address}<br>No.${r.company_number}`);
+            .bindPopup(`<b>${r.name}</b><br>${r.address}<br>No.${r.company_number}<br>${r.type}`);
           markers.addLayer(marker);
         }
       });
-      if(rows.length){
-        const pts = rows.filter(r=>r._geo).map(r=>[r._geo.lat, r._geo.lon]);
+      if(filtered.length){
+        const pts = filtered.filter(r=>r._geo).map(r=>[r._geo.lat, r._geo.lon]);
         if(pts.length) map.fitBounds(pts);
       }
     }
@@ -58,25 +87,41 @@
       return null;
     }
 
-    async function processRows(rows){
-      for(const r of rows){
+    async function processRows(items){
+      for(const r of items){
         r._geo = await geocodeOne(r.address);
-        await new Promise(res=>setTimeout(res,800)); // API優しめに
+        await new Promise(res=>setTimeout(res,800)); // API負荷軽減
       }
-      plotRows(rows);
+      renderCityOptions();
+      plotRows();
+    }
+
+    function renderCityOptions(){
+      const cityFilter = document.getElementById('cityFilter');
+      const cities = Array.from(new Set(rows.map(r=>r.city).filter(Boolean))).sort();
+      cityFilter.innerHTML = '<option value=\"\">全て</option>' + cities.map(c=>`<option>${c}</option>`).join('');
     }
 
     function loadCSVText(text){
       Papa.parse(text, { header: true, skipEmptyLines: true, complete: async (res) => {
-        const rows = res.data.map((r, i) => ({
-          id: i+1,
-          name: (r.name || r['会社名'] || '').trim(),
-          address: (
-            r.address ||
-            ((r['県名']||'') + (r['市町村']||'') + (r['番地']||''))
-          ).trim(),
-          company_number: (r.company_number || r['会社番号'] || '').trim()
-        }));
+        rows = res.data.map((r, i) => {
+          const name = (r.name || r['会社名'] || '').trim();
+          let type = 'その他';
+          if(name.includes('株式会社')) type = '株式会社';
+          else if(name.includes('有限会社')) type = '有限会社';
+          else if(name.includes('NPO法人')) type = 'NPO法人';
+          return {
+            id: i+1,
+            name,
+            address: (
+              r.address ||
+              ((r['県名']||'') + (r['市町村']||'') + (r['番地']||''))
+            ).trim(),
+            city: (r['市町村']||'').trim(),
+            company_number: (r.company_number || r['会社番号'] || '').trim(),
+            type
+          };
+        });
         await processRows(rows);
       }});
     }
@@ -90,10 +135,14 @@
 
     document.getElementById('btnDemo').addEventListener('click', () => {
       const demo = `company_number,name,県名,市町村,番地
-000000000001,サンプル製作所,埼玉県,熊谷市,本石2-135
-000000000002,テスト商事,埼玉県,鴻巣市,本町1-2-3`;
+000000000001,株式会社サンプル製作所,埼玉県,熊谷市,本石2-135
+000000000002,NPO法人テスト商事,埼玉県,鴻巣市,本町1-2-3
+000000000003,有限会社北埼玉工業,埼玉県,行田市,栄町2-2`;
       loadCSVText(demo);
     });
+
+    document.getElementById('cityFilter').addEventListener('change', plotRows);
+    document.getElementById('typeFilter').addEventListener('change', plotRows);
   </script>
 </body>
 </html>
