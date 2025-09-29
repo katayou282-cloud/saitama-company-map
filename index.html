@@ -1,0 +1,717 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>埼玉 会社マップ | CSV→地図表示・最短ルート・メモ共有</title>
+  <link rel="preconnect" href="https://unpkg.com">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+  <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+  <style>
+    :root {
+      --bg: #0b1020;
+      --panel: #111833;
+      --sub: #7ea1ff;
+      --txt: #eef2ff;
+      --muted: #9aa3b2;
+      --accent: #4f80ff;
+      --ok: #34c759;
+      --warn: #ffb020;
+      --bad: #ff4d4f;
+    }
+    html, body { height: 100%; margin: 0; background: var(--bg); color: var(--txt); font-family: system-ui, "Hiragino Sans", "Yu Gothic", Meiryo, sans-serif; }
+    .app { display: grid; grid-template-columns: 380px 1fr; grid-template-rows: 56px 1fr; grid-template-areas: 'header header' 'sidebar map'; height: 100%; }
+    header { grid-area: header; display: flex; align-items: center; gap: 12px; padding: 8px 12px; background: #0d1328; border-bottom: 1px solid #1d2650; }
+    header h1 { font-size: 18px; margin: 0; font-weight: 700; letter-spacing: .2px; }
+    header .pill { font-size: 12px; padding: 4px 8px; border: 1px solid #2a3970; border-radius: 999px; color: var(--sub); }
+
+    aside { grid-area: sidebar; overflow: auto; background: var(--panel); border-right: 1px solid #1d2650; }
+    .section { padding: 14px 14px 2px; }
+    .section h2 { margin: 0 0 10px; font-size: 13px; color: var(--sub); letter-spacing: .4px; text-transform: uppercase; }
+    .card { background: #0f1730; border: 1px solid #1e2a56; border-radius: 14px; padding: 12px; margin-bottom: 12px; box-shadow: 0 6px 16px #00000030; }
+    label { font-size: 13px; color: var(--muted); display: block; margin-bottom: 6px; }
+    input[type="text"], input[type="search"], select, textarea { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #263469; background: #0c142b; color: var(--txt); outline: none; }
+    input[type="file"] { width: 100%; }
+    textarea { min-height: 80px; }
+    .row { display: flex; gap: 8px; }
+    .row > * { flex: 1; }
+    .btn { background: #14214a; color: var(--txt); border: 1px solid #2a3e8f; border-radius: 10px; padding: 10px 12px; cursor: pointer; font-weight: 600; }
+    .btn:hover { filter: brightness(1.15); }
+    .btn.ok { border-color: #27683b; background: #0f2c1b; color: #c9ffd6; }
+    .btn.warn { border-color: #70521a; background: #2b1f0b; color: #ffe6b3; }
+    .btn.bad { border-color: #6f1c1c; background: #2b0d0d; color: #ffd0d0; }
+
+    #map { grid-area: map; }
+    .list { padding: 6px 8px 18px; }
+    .company { display: grid; grid-template-columns: 22px 1fr auto; gap: 8px; align-items: start; padding: 8px; border-bottom: 1px dashed #1f2c5c; }
+    .company:last-child { border: none; }
+    .company h3 { margin: 0; font-size: 14px; }
+    .company .meta { font-size: 12px; color: var(--muted); }
+    .tag { display: inline-block; font-size: 11px; padding: 2px 6px; border-radius: 999px; border: 1px solid #2a3970; color: #c8d3ff; margin-left: 6px; }
+    .badge { font-size: 11px; padding: 2px 6px; border-radius: 6px; border: 1px solid #2a3970; color: #9cd0ff; }
+    .small { font-size: 12px; color: var(--muted); }
+    .hint { font-size: 12px; color: var(--muted); margin-top: 6px; }
+    .floating { position: absolute; z-index: 1000; top: 64px; right: 12px; background: #0f1730; border: 1px solid #1e2a56; border-radius: 12px; padding: 8px; display: flex; gap: 6px; }
+    .chip { font-size: 12px; padding: 6px 10px; border-radius: 999px; background: #0d1630; border: 1px solid #243775; cursor: pointer; }
+    .chip.active { background: #172865; }
+    .footer { padding: 10px 14px 16px; color: var(--muted); font-size: 12px; }
+    .link { color: #a8c7ff; text-decoration: underline; cursor: pointer; }
+
+    .grid { display:grid; grid-template-columns: 1fr 1fr; gap:8px; }
+
+    /* mobile tweaks */
+    @media (max-width: 768px){
+      .app { grid-template-columns: 1fr; grid-template-rows: 56px 1fr; grid-template-areas: 'header' 'map'; }
+      aside { position: absolute; left: 0; top: 56px; width: 94vw; max-height: 60vh; z-index: 1200; transform: translateY(-100%); transition: transform .25s ease; background: var(--panel); border-right: none; border-bottom: 1px solid #1d2650; border-radius: 0 0 12px 12px; }
+      aside.open { transform: translateY(0); }
+      #map { height: calc(100vh - 56px); }
+      header .btn { padding: 8px 10px; }
+    }
+  </style>
+</head>
+<body>
+<div class="app">
+  <header>
+    <h1>埼玉 会社マップ</h1>
+    <span class="pill">CSV → 地図</span>
+    <span class="pill">現在地 / ルート最適化</span>
+    <span class="pill">メモ: 個人 / 共有 / 外部共有</span>
+    <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+      <button class="btn" id="btnLocate">📍 現在地取得</button>
+      <button class="btn" id="btnFit">🗺 全体表示</button>
+      <button class="btn" id="btnToggleMenu">☰ メニュー</button>
+    </div>
+  </header>
+
+  <aside id="side">
+    <div class="section">
+      <h2>1. CSV読み込み</h2>
+      <div class="card">
+        <label>CSV/TSV（自動判定）※ ヘッダは何でもOK：後で項目をマッピングできます</label>
+        <input type="file" id="file" accept=".csv,.tsv,text/csv,text/tab-separated-values" />
+        <div class="row" style="margin-top:8px;">
+          <button class="btn" id="btnDemo">サンプル読込</button>
+          <button class="btn" id="btnClearCache">ジオコード・キャッシュ削除</button>
+        </div>
+        <div class="hint">※ 住所は自動ジオコーディング（Nominatim / OpenStreetMap）。結果はローカルにキャッシュ。</div>
+      </div>
+    </div>
+
+    <div class="section" id="mappingSec" style="display:none;">
+      <h2>1.5 ヘッダの自動認識 / 手動マッピング</h2>
+      <div class="card">
+        <div class="grid">
+          <div>
+            <label>会社名</label>
+            <select id="map_name"></select>
+          </div>
+          <div>
+            <label>会社番号（法人番号など ※12〜13桁）</label>
+            <select id="map_number"></select>
+          </div>
+          <div>
+            <label>都道府県</label>
+            <select id="map_pref"></select>
+          </div>
+          <div>
+            <label>市区町村</label>
+            <select id="map_city"></select>
+          </div>
+          <div style="grid-column:1/3;">
+            <label>住所（通り/番地 等）</label>
+            <select id="map_addr"></select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:10px;">
+          <button class="btn ok" id="btnApplyMapping">マッピングを適用</button>
+          <button class="btn" id="btnUseSingleAddress">↑ではなく「住所（単一列）」だけ使う</button>
+        </div>
+        <div class="hint small">例：都道府県=埼玉県 / 市区町村=飯能市 / 住所=大字飯能… の分割列にも対応。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>2. 絞り込み & 検索</h2>
+      <div class="card">
+        <div class="row">
+          <select id="cityFilter">
+            <option value="">全ての市区町村</option>
+          </select>
+          <input type="search" id="kw" placeholder="会社名/住所/番号 キーワード…" />
+        </div>
+        <div class="hint">熊谷市＋周辺（行田/深谷/鴻巣/東松山/本庄/吉見/寄居 等）を想定。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>3. ルート & 近傍</h2>
+      <div class="card">
+        <div class="row">
+          <button class="btn" id="btnNearest">最も近い会社を探す</button>
+          <button class="btn ok" id="btnOptimize">選択→最短巡回</button>
+        </div>
+        <div class="hint small">OSRM Trip API で巡回順序を自動最適化（自家用車/営業車向け）。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>4. メモ管理</h2>
+      <div class="card">
+        <div class="row">
+          <button class="btn" id="btnExportTeam">共有メモを書き出し</button>
+          <button class="btn" id="btnImportTeam">共有メモを読み込み</button>
+        </div>
+        <div class="hint">個人メモは端末ローカルに自動保存。共有メモはJSONでエクスポート/インポート。外部共有はリンク生成。</div>
+      </div>
+    </div>
+
+    <div class="section">
+      <h2>リスト（チェックして巡回）</h2>
+      <div class="list" id="list"></div>
+    </div>
+
+    <div class="footer">ⓘ データはブラウザ内で処理。外部には送信しません（ジオコーディング/ルートAPIを除く）。</div>
+  </aside>
+
+  <div id="map"></div>
+
+  <div class="floating">
+    <div class="chip" id="toggleCluster">クラスタ: ON</div>
+    <div class="chip" id="toggleLabels">ラベル: OFF</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script>
+  // --- Utilities ---
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const ls = {
+    get(k, d=null){ try{ const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; }catch(e){ return d; } },
+    set(k, v){ localStorage.setItem(k, JSON.stringify(v)); }
+  };
+  const GEO_CACHE_KEY = 'geo-cache-v1';
+  const PRIVATE_MEMO_KEY = 'private-memo-v1';
+  const TEAM_MEMO_KEY = 'team-memo-v1';
+
+  const geoCache = ls.get(GEO_CACHE_KEY, {});
+  const privateMemo = ls.get(PRIVATE_MEMO_KEY, {});
+  let teamMemo = ls.get(TEAM_MEMO_KEY, {});
+
+  function csvToCity(addr){
+    if(!addr) return '';
+    const m = addr.match(/埼玉県([^0-9\s]+?[市区町村郡町村])/);
+    return m ? m[1] : '';
+  }
+
+  function buildShareLink(company){
+    const payload = {
+      name: company.name,
+      address: company.address,
+      company_number: company.company_number,
+      memo_external: company.memo_external || ''
+    };
+    const b = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+    const url = new URL(location.href);
+    url.hash = 'share=' + b;
+    return url.toString();
+  }
+
+  function tryLoadShareFromHash(){
+    if(location.hash.startsWith('#share=')){
+      try{
+        const data = JSON.parse(decodeURIComponent(escape(atob(location.hash.slice(7)))));
+        alert(\`外部共有メモを読み込みました\n\n会社名: \${data.name}\n住所: \${data.address}\n会社番号: \${data.company_number}\n\n共有メモ:\n\${data.memo_external || '(なし)'}\n\nこの画面では表示のみです。\`);
+      }catch(e){ console.warn(e); }
+    }
+  }
+
+  // --- Map Setup ---
+  const map = L.map('map');
+  const base = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, attribution: '&copy; OpenStreetMap' });
+  base.addTo(map);
+  map.setView([36.1473, 139.3889], 11); // 熊谷周辺
+
+  const clusterGroup = L.markerClusterGroup();
+  const plainGroup = L.layerGroup();
+  let useCluster = true;
+  clusterGroup.addTo(map);
+
+  let markers = []; // {marker, data}
+  let selectedIds = new Set();
+  let currentPosition = null;
+
+  document.getElementById('toggleCluster').addEventListener('click', () => {
+    useCluster = !useCluster;
+    document.getElementById('toggleCluster').classList.toggle('active', !useCluster);
+    refreshMarkerLayer();
+  });
+
+  let showLabels = false;
+  document.getElementById('toggleLabels').addEventListener('click', () => {
+    showLabels = !showLabels;
+    document.getElementById('toggleLabels').classList.toggle('active', showLabels);
+    markers.forEach(m => {
+      if(showLabels){
+        m.marker.bindTooltip(m.data.name, {permanent:true, direction:'right'}).openTooltip();
+      } else {
+        m.marker.unbindTooltip();
+      }
+    });
+  });
+
+  function refreshMarkerLayer(){
+    map.removeLayer(clusterGroup);
+    map.removeLayer(plainGroup);
+    if(useCluster){
+      clusterGroup.clearLayers();
+      markers.forEach(m => clusterGroup.addLayer(m.marker));
+      clusterGroup.addTo(map);
+    } else {
+      plainGroup.clearLayers();
+      markers.forEach(m => plainGroup.addLayer(m.marker));
+      plainGroup.addTo(map);
+    }
+  }
+
+  // --- Data State ---
+  let rawRecords = []; // parsed raw rows as objects
+  let headers = [];
+  let mapping = { name:null, number:null, pref:null, city:null, addr:null, singleAddress:false };
+  let rows = []; // normalized rows used by the app
+
+  // --- CSV Handling ---
+  const fileInput = document.getElementById('file');
+  fileInput.addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const text = await file.text();
+    loadCSVText(text);
+  });
+
+  document.getElementById('btnDemo').addEventListener('click', async () => {
+    // デモは分割列版（pref/city/addr）
+    const demo = \`code,bignum,flag1,flag2,reg,upd,name,blank,pref_code,pref,city,addr,blank2,xx,yy\n20,1010000000001,1,0,2015/11/6,2015/10/5,株式会社エキスティック設計事務所,,11,埼玉県,飯能市,大字飯能２９０番地５,,209,3570063\`;
+    loadCSVText(demo);
+  });
+
+  document.getElementById('btnClearCache').addEventListener('click', () => {
+    if(confirm('ジオコーディング結果のキャッシュを削除しますか？')){
+      ls.set(GEO_CACHE_KEY, {});
+      alert('削除しました');
+    }
+  });
+
+  function expandSci(s){
+    if(s == null) return '';
+    s = String(s).trim();
+    if(!/[eE]/.test(s)) return s;
+    // 正確に展開（小数部+指数）
+    const m = s.match(/^([0-9]+)(?:\.([0-9]+))?[eE]([+-]?[0-9]+)$/);
+    if(!m) return s;
+    let int = m[1] || '0';
+    let frac = m[2] || '';
+    const exp = parseInt(m[3], 10) || 0;
+    if(exp >= 0){
+      // 小数点を右にexp桁
+      if(frac.length <= exp){
+        return int + frac + '0'.repeat(exp - frac.length);
+      } else {
+        return int + frac.slice(0, exp) + '.' + frac.slice(exp);
+      }
+    } else {
+      // 左へ
+      const n = Math.abs(exp);
+      const all = int.padStart(int.length + n, '0');
+      const pos = all.length - n;
+      return all.slice(0, pos) + '.' + all.slice(pos) + frac;
+    }
+  }
+
+  function autoDetectMapping(hdrs, sample){
+    const pick = (cands) => hdrs.find(h => cands.some(k => h.toLowerCase().includes(k)) ) || '';
+    const name = pick(['会社名','法人名','名称','name','title']);
+    let number = pick(['法人番号','company','number','番号','code','id']);
+    if(!number){
+      const kv = Object.entries(sample||{}).find(([k,v]) => /^(\d{12,13}|\d+e\+\d+)$/i.test(String(v).replace(/\s/g,'')) );
+      if(kv) number = kv[0];
+    }
+    const pref = pick(['都道府県','pref','県']);
+    const city = pick(['市','区','町','村','city']);
+    const addr = pick(['住所','所在地','番地','地名','address']);
+    return { name, number, pref, city, addr };
+  }
+
+  function populateMappingUI(){
+    const sec = document.getElementById('mappingSec');
+    sec.style.display = 'block';
+    const selects = ['map_name','map_number','map_pref','map_city','map_addr'];
+    selects.forEach(id => {
+      const el = document.getElementById(id);
+      el.innerHTML = '<option value="">（未選択）</option>' + headers.map(h => \`<option value="\${h}">\${h}</option>\`).join('');
+    });
+    // 自動推定を反映
+    const guess = autoDetectMapping(headers, rawRecords[0]||{});
+    mapping = { ...mapping, ...guess };
+    if(mapping.name) document.getElementById('map_name').value = mapping.name;
+    if(mapping.number) document.getElementById('map_number').value = mapping.number;
+    if(mapping.pref) document.getElementById('map_pref').value = mapping.pref;
+    if(mapping.city) document.getElementById('map_city').value = mapping.city;
+    if(mapping.addr) document.getElementById('map_addr').value = mapping.addr;
+  }
+
+  function deriveRows(){
+    rows = rawRecords.map((rec, i) => {
+      const name = (rec[mapping.name] ?? rec['name'] ?? '').toString().trim();
+      // number は科学記法の展開 & 記号除去
+      let numRaw = (rec[mapping.number] ?? rec['company_number'] ?? '').toString().trim();
+      numRaw = expandSci(numRaw).replace(/[^0-9]/g,'');
+      // 住所
+      let address = '';
+      if(mapping.singleAddress || (!mapping.pref && !mapping.city && mapping.addr)){
+        address = (rec[mapping.addr] ?? rec['address'] ?? '').toString().trim();
+      } else {
+        const pref = (rec[mapping.pref] ?? '').toString().trim();
+        const city = (rec[mapping.city] ?? '').toString().trim();
+        const addr = (rec[mapping.addr] ?? '').toString().trim();
+        address = [pref, city, addr].filter(Boolean).join('');
+      }
+      const cityName = (rec[mapping.city] ?? '') || csvToCity(address);
+      return { id:i+1, name, address, company_number: numRaw, city: cityName, _geo:null };
+    });
+  }
+
+  function loadCSVText(text){
+    Papa.parse(text, {
+      header: true,
+      skipEmptyLines: true,
+      dynamicTyping: false, // 数字の桁落ち防止
+      delimiter: '', // 自動判定（CSV/TSV対応）
+      complete: async (res) => {
+        rawRecords = res.data;
+        headers = res.meta.fields || Object.keys(rawRecords[0]||{});
+        populateMappingUI();
+        // 推定で一次構築
+        mapping.singleAddress = false;
+        deriveRows();
+        await geocodeAll(rows);
+        renderCityFilter();
+        renderList();
+        plotMarkers();
+        fitAll();
+      }
+    });
+  }
+
+  document.getElementById('btnApplyMapping').addEventListener('click', async () => {
+    mapping.name = document.getElementById('map_name').value || mapping.name;
+    mapping.number = document.getElementById('map_number').value || mapping.number;
+    mapping.pref = document.getElementById('map_pref').value || mapping.pref;
+    mapping.city = document.getElementById('map_city').value || mapping.city;
+    mapping.addr = document.getElementById('map_addr').value || mapping.addr;
+    mapping.singleAddress = false;
+    deriveRows();
+    await geocodeAll(rows);
+    renderCityFilter();
+    renderList();
+    plotMarkers();
+    fitAll();
+  });
+
+  document.getElementById('btnUseSingleAddress').addEventListener('click', async () => {
+    mapping.singleAddress = true;
+    if(!document.getElementById('map_addr').value){
+      alert('「住所（通り/番地 等）」に単一列の住所ヘッダを選んでください。');
+      return;
+    }
+    mapping.addr = document.getElementById('map_addr').value;
+    deriveRows();
+    await geocodeAll(rows);
+    renderCityFilter();
+    renderList();
+    plotMarkers();
+    fitAll();
+  });
+
+  // --- Geocoding (Nominatim) ---
+  async function geocodeOne(address){
+    if(geoCache[address]) return geoCache[address];
+    if(!address) return null;
+    const url = new URL('https://nominatim.openstreetmap.org/search');
+    url.searchParams.set('q', address);
+    url.searchParams.set('format', 'jsonv2');
+    url.searchParams.set('addressdetails', '1');
+    url.searchParams.set('countrycodes', 'jp');
+    const res = await fetch(url.toString(), { headers: { 'Accept-Language': 'ja', 'User-Agent': 'SaitamaCompanyMap/1.1 (mapping-support)' }});
+    const js = await res.json();
+    const best = js[0];
+    if(best){
+      const p = { lat: +best.lat, lon: +best.lon, display_name: best.display_name };
+      geoCache[address] = p; ls.set(GEO_CACHE_KEY, geoCache);
+      await sleep(700); // Nominatim配慮
+      return p;
+    }
+    return null;
+  }
+
+  async function geocodeAll(items){
+    for(const r of items){
+      if(!r.address) continue;
+      const g = await geocodeOne(r.address);
+      r._geo = g;
+      if(!r.city) r.city = csvToCity(r.address);
+    }
+  }
+
+  // --- Rendering ---
+  const listEl = document.getElementById('list');
+  const cityFilter = document.getElementById('cityFilter');
+  const kwInput = document.getElementById('kw');
+
+  function renderCityFilter(){
+    const cities = Array.from(new Set(rows.map(r => r.city).filter(Boolean))).sort();
+    cityFilter.innerHTML = '<option value="">全ての市区町村</option>' + cities.map(c => \`<option>\${c}</option>\`).join('');
+  }
+
+  function filtered(){
+    const city = cityFilter.value;
+    const kw = kwInput.value.trim();
+    return rows.filter(r => {
+      if(!r._geo) return false;
+      if(city && r.city !== city) return false;
+      if(kw){
+        const hay = \`\${r.name} \${r.address} \${r.company_number}\`;
+        return hay.includes(kw);
+      }
+      return true;
+    });
+  }
+
+  function renderList(){
+    const arr = filtered();
+    listEl.innerHTML = '';
+    arr.forEach(r => {
+      const hasPriv = !!privateMemo[r.company_number];
+      const hasTeam = !!teamMemo[r.company_number];
+      const row = document.createElement('div');
+      row.className = 'company';
+      row.innerHTML = \`
+        <input type="checkbox" data-id="\${r.id}" \${selectedIds.has(r.id)?'checked':''} />
+        <div>
+          <h3>\${escapeHtml(r.name)} \${hasPriv?'<span class="tag">個人ﾒﾓ</span>':''} \${hasTeam?'<span class="tag">共有ﾒﾓ</span>':''}</h3>
+          <div class="meta">\${escapeHtml(r.address)} ・ No. \${escapeHtml(r.company_number)}</div>
+          <div class="row" style="margin-top:6px;">
+            <button class="btn" data-action="view" data-id="\${r.id}">詳細/メモ</button>
+            <button class="btn" data-action="go" data-id="\${r.id}">ここへ行く</button>
+            <button class="btn" data-action="share" data-id="\${r.id}">外部共有リンク</button>
+          </div>
+        </div>
+        <div><span class="badge">\${r.city||'市区町村不明'}</span></div>
+      \`;
+      listEl.appendChild(row);
+    });
+  }
+
+  listEl.addEventListener('change', (e) => {
+    if(e.target.matches('input[type="checkbox"][data-id]')){
+      const id = +e.target.dataset.id;
+      e.target.checked ? selectedIds.add(id) : selectedIds.delete(id);
+      recolorMarkers();
+    }
+  });
+
+  listEl.addEventListener('click', (e) => {
+    const btn = e.target.closest('button[data-action]');
+    if(!btn) return;
+    const id = +btn.dataset.id;
+    const r = rows.find(x => x.id === id);
+    if(!r) return;
+    if(btn.dataset.action === 'view') openDetail(r);
+    if(btn.dataset.action === 'go') routeTo(r);
+    if(btn.dataset.action === 'share'){
+      const link = buildShareLink({ ...r, memo_external: (teamMemo[r.company_number]?.external)||'' });
+      navigator.clipboard?.writeText(link);
+      alert('外部共有リンクをコピーしました\n\n' + link);
+    }
+  });
+
+  cityFilter.addEventListener('change', () => { renderList(); plotMarkers(); fitAll(); });
+  kwInput.addEventListener('input', () => { renderList(); plotMarkers(); });
+
+  function escapeHtml(s){ return (s||'').replace(/[&<>"{]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','{':'&#123;'}[c])); }
+
+  // --- Markers ---
+  function plotMarkers(){
+    // clear
+    markers.forEach(m => m.marker.remove());
+    markers = [];
+
+    const arr = filtered();
+    arr.forEach(r => {
+      const color = selectedIds.has(r.id) ? '#4f80ff' : (privateMemo[r.company_number]||teamMemo[r.company_number] ? '#34c759' : '#d4d9e6');
+      const icon = L.divIcon({ className: 'custom-marker', html: \`<div style="width:14px;height:14px;border-radius:50%;background:\${color};border:2px solid #0b1020;"></div>\`});
+      const marker = L.marker([r._geo.lat, r._geo.lon], { icon });
+      marker.bindPopup(\`<b>\${escapeHtml(r.name)}</b><br>\${escapeHtml(r.address)}<br>No. \${escapeHtml(r.company_number)}\`);
+      marker.on('click', () => openDetail(r));
+      markers.push({ marker, data: r });
+    });
+    refreshMarkerLayer();
+  }
+
+  function recolorMarkers(){
+    markers.forEach(m => {
+      const r = m.data;
+      const color = selectedIds.has(r.id) ? '#4f80ff' : (privateMemo[r.company_number]||teamMemo[r.company_number] ? '#34c759' : '#d4d9e6');
+      m.marker.setIcon(L.divIcon({ className:'custom-marker', html:\`<div style=\"width:14px;height:14px;border-radius:50%;background:\${color};border:2px solid #0b1020;\"></div>\` }));
+    });
+  }
+
+  function fitAll(){
+    const arr = filtered();
+    const pts = arr.filter(r=>r._geo).map(r => [r._geo.lat, r._geo.lon]);
+    if(pts.length){ map.fitBounds(pts, { padding: [40,40] }); }
+  }
+
+  // --- Detail / Memo modal (promptベース簡易)
+  async function openDetail(r){
+    const privKey = r.company_number || r.address;
+    const currentPriv = privateMemo[privKey] || '';
+    const currentTeam = (teamMemo[privKey]?.team)||'';
+    const currentExt = (teamMemo[privKey]?.external)||'';
+
+    const t = prompt(\`【詳細 / メモ】\n\n会社名: \${r.name}\n住所: \${r.address}\n会社番号: \${r.company_number}\n\n[個人メモ] この端末だけ:\`, currentPriv ?? '');
+    if(t !== null){ privateMemo[privKey] = t; ls.set(PRIVATE_MEMO_KEY, privateMemo); }
+
+    const y = prompt('[共有メモ] チームで使う: (後でJSON書き出し/読み込みで同期)', currentTeam);
+    if(y !== null){ teamMemo[privKey] = { ...(teamMemo[privKey]||{}), team: y } ; ls.set(TEAM_MEMO_KEY, teamMemo); }
+
+    const z = prompt('[外部共有用メモ] リンク生成で外部に見せる内容:', currentExt);
+    if(z !== null){ teamMemo[privKey] = { ...(teamMemo[privKey]||{}), external: z } ; ls.set(TEAM_MEMO_KEY, teamMemo); }
+
+    renderList(); recolorMarkers();
+  }
+
+  // --- Geolocation ---
+  document.getElementById('btnLocate').addEventListener('click', () => {
+    if(!navigator.geolocation){ return alert('この端末では位置情報が使えません'); }
+    navigator.geolocation.getCurrentPosition((pos) => {
+      currentPosition = [pos.coords.latitude, pos.coords.longitude];
+      L.circleMarker(currentPosition, { radius: 8, color: '#4f80ff' }).addTo(map).bindPopup('現在地');
+      map.setView(currentPosition, 13);
+    }, (err) => alert('現在地を取得できませんでした: ' + err.message));
+  });
+
+  document.getElementById('btnFit').addEventListener('click', fitAll);
+  document.getElementById('btnToggleMenu').addEventListener('click', () => {
+    document.getElementById('side').classList.toggle('open');
+  });
+
+  // --- Nearest ---
+  document.getElementById('btnNearest').addEventListener('click', () => {
+    if(!currentPosition) return alert('まず「現在地取得」を押してください');
+    const arr = filtered();
+    if(!arr.length) return alert('候補がありません');
+    let best = null, bestD = Infinity;
+    for(const r of arr){
+      const d = haversine(currentPosition, [r._geo.lat, r._geo.lon]);
+      if(d < bestD){ bestD = d; best = r; }
+    }
+    if(best){
+      alert(\`最寄りは「\${best.name}」 約\${bestD.toFixed(2)} km\`);
+      map.setView([best._geo.lat, best._geo.lon], 15);
+    }
+  });
+
+  function haversine(a, b){
+    const R = 6371; // km
+    const toRad = x => x * Math.PI/180;
+    const dLat = toRad(b[0]-a[0]);
+    const dLon = toRad(b[1]-a[1]);
+    const s = Math.sin(dLat/2)**2 + Math.cos(toRad(a[0]))*Math.cos(toRad(b[0]))*Math.sin(dLon/2)**2;
+    return 2*R*Math.asin(Math.sqrt(s));
+  }
+
+  // --- Routing (OSRM Trip API for optimization) ---
+  async function routeTo(r){
+    if(!currentPosition){
+      const ok = confirm('現在地が未設定です。ブラウザの現在地を出発点としますか？');
+      if(ok){ document.getElementById('btnLocate').click(); await sleep(1200); }
+    }
+    if(!currentPosition) return;
+    const url = \`https://www.openstreetmap.org/directions?engine=fossgis_osrm_car&route=\${currentPosition[0]}%2C\${currentPosition[1]}%3B\${r._geo.lat}%2C\${r._geo.lon}\`;
+    window.open(url, '_blank');
+  }
+
+  document.getElementById('btnOptimize').addEventListener('click', async () => {
+    if(!currentPosition) return alert('まず「現在地取得」を押してください');
+    const arr = rows.filter(r => selectedIds.has(r.id));
+    if(arr.length < 1) return alert('巡回する会社をチェックしてください');
+    const qs = [currentPosition.slice().reverse().join(','), ...arr.map(r => [r._geo.lon, r._geo.lat].join(','))].join(';');
+    const api = \`https://router.project-osrm.org/trip/v1/driving/\${qs}?source=first&roundtrip=false&overview=full\`;
+    try{
+      const rj = await (await fetch(api)).json();
+      if(rj.code !== 'Ok') throw new Error(rj.code||'OSRM error');
+      const route = rj.trips[0];
+      const poly = L.Polyline.fromEncoded(route.geometry);
+      L.polyline(poly.getLatLngs(), { color:'#4f80ff' }).addTo(map);
+      map.fitBounds(poly.getBounds(), { padding:[30,30] });
+      alert('最適順序を地図に描画しました。');
+    }catch(e){
+      console.error(e);
+      alert('最適化に失敗しました（OSRMサーバ混雑の可能性）。時間を置いてお試しください。');
+    }
+  });
+
+  // --- Team memo import/export ---
+  document.getElementById('btnExportTeam').addEventListener('click', () => {
+    const blob = new Blob([JSON.stringify(teamMemo, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'shared-memo.json';
+    a.click();
+  });
+  document.getElementById('btnImportTeam').addEventListener('click', () => {
+    const inp = document.createElement('input');
+    inp.type = 'file'; inp.accept = 'application/json';
+    inp.onchange = async () => {
+      const f = inp.files[0]; if(!f) return;
+      const js = JSON.parse(await f.text());
+      teamMemo = js; ls.set(TEAM_MEMO_KEY, teamMemo);
+      renderList(); recolorMarkers();
+      alert('共有メモを読み込みました');
+    };
+    inp.click();
+  });
+
+  // --- Hash share load ---
+  tryLoadShareFromHash();
+</script>
+
+<!-- Polyline decoder (Leaflet) -->
+<script>
+// Minimal polyline decoder for OSRM geometry (polyline6)
+// Source: mapbox polyline algorithm adapted
+(function(){
+  function decode(str, precision){
+    let index = 0, lat = 0, lng = 0, coordinates = [], shift = 0, result = 0, byte = null;
+    const factor = Math.pow(10, precision || 6);
+    while (index < str.length) {
+      shift = 0; result = 0;
+      do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+      const deltaLat = (result & 1) ? ~(result >> 1) : (result >> 1);
+      lat += deltaLat;
+      shift = 0; result = 0;
+      do { byte = str.charCodeAt(index++) - 63; result |= (byte & 0x1f) << shift; shift += 5; } while (byte >= 0x20);
+      const deltaLng = (result & 1) ? ~(result >> 1) : (result >> 1);
+      lng += deltaLng;
+      coordinates.push([lat / factor, lng / factor]);
+    }
+    return coordinates;
+  }
+  L.Polyline.fromEncoded = function(str){ return L.polyline(decode(str, 6)); };
+})();
+</script>
+</body>
+</html>
